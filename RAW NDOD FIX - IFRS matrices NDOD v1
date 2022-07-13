@@ -1,0 +1,328 @@
+options mprint mlogic symbolgen;
+
+%let cur_mon = 202109; /**/
+%let cur_mon2 = 01sep2021; /**/
+
+%include "E:\ANALYTICS FRAMEWORK\IFRS\SAS Code\IFRS9 libraries.sas";
+%include "E:\ANALYTICS FRAMEWORK\IFRS\SAS Code\IFRS_macros v3.sas";
+
+/*%let ctry=AAA;*/
+/*%let country=UK;*/
+%macro templates;
+	libname ifrs "F:\Europe_F\IFRS\SAS Data\&country.";
+	libname ifrs_&ctry. "F:\Europe_F\IFRS\SAS Data\&country.";
+	libname idi_&country "E:\Europe_E\IDI Data Depersonalised\&country.";
+	libname &country._perf sas7bdat "E:\Europe_E\IDI Data Depersonalised\&country.\PERF";
+	
+	PROC IMPORT OUT= ifrs.stratify
+	DATAFILE = %if %upcase(&country) ^= UK and %upcase(&country) ^= GER %then %do; "F:\Europe_F\IFRS\F. IFRS9 Production\Production templates\Strata ndod template v2.xlsx" %end; %else
+	%if %upcase(&country) = UK or %upcase(&country) = GER %then %do; "F:\Europe_F\IFRS\F. IFRS9 Production\Production templates\Strata ndod Template UK V2.xlsx" %end;
+	DBMS=EXCEL REPLACE; RANGE="Sheet1$"; GETNAMES=YES; MIXED=NO; SCANTEXT=YES; USEDATE=YES; SCANTIME=YES;
+	RUN;
+	
+	PROC IMPORT OUT= ifrs.stratify2
+	DATAFILE = %if %upcase(&country) ^= UK and %upcase(&country) ^= GER %then %do; "F:\Europe_F\IFRS\F. IFRS9 Production\Production templates\Strata ndod template V2a.xlsx" %end; %else
+	%if %upcase(&country) = UK or %upcase(&country) = GER %then %do; "F:\Europe_F\IFRS\F. IFRS9 Production\Production templates\Strata ndod template Uk V2a.xlsx" %end;
+	DBMS=EXCEL REPLACE; RANGE="Sheet1$"; GETNAMES=YES; MIXED=NO; SCANTEXT=YES; USEDATE=YES; SCANTIME=YES;
+	RUN;
+	
+	PROC IMPORT OUT= Coeff_templ
+	DATAFILE = "F:\Europe_F\IFRS\F. IFRS9 Production\Production templates\Coefficients templ.xlsx"
+	DBMS=EXCEL REPLACE; RANGE="Sheet1$"; GETNAMES=YES; MIXED=NO; SCANTEXT=YES; USEDATE=YES; SCANTIME=YES;
+	RUN;
+%mend;
+
+
+%macro st (st = );
+/*This is the chango to modify DE and IT*/
+/*
+	data x2;
+		ref_dt  = mdy(substr(put(&st, $6.),5,2)*1,1,substr(put(&st, $6.),1,4)*1);
+		ref_dt2 = intnx('day', intnx('month', ref_dt, 1), -1);
+		format ref_dt2  date9.;
+		call symput ("ref_dt", ref_dt2);			
+	run;
+	%let ref_dt = %sysfunc(putn(&ref_dt,date9.)); 	
+	%put &ref_dt;
+*/
+	%templates; 
+/*where a.Customer_Type in ('Busines','Business') and b.Customer_Type in ('Busines','Business') Filter for B2B and B2C or New/Used*/ /*FR= 'Corporate','Individual'*/ /*DE= 'Busines','Business', 'Private'*/
+	data &country._&st._NDOD;
+		length strata_NDOD $ 30;
+		set ifrs.&country._all_&st._2;
+		
+/*This is the chango to modify DE, IT, */
+/*		
+		live_new = '1';
+		if date_written_off_srs ne . and  date_written_off_srs  <= "&ref_dt."d then live_new = '0';
+		if closed_dt ne. and closed_dt <= "&ref_dt."d then live_new = '0';
+*/
+		if strata in ('A. R0 Pur') 	then strata_NDOD = '01 - R0 pur';else 
+		if strata in ('B. R0 was Pastdue long time ago Never NPE' 'E. R0 was NPE not FBE without recent past-due') then strata_NDOD = '02 - R0 was past-due >12m';	else 
+		if strata in ('C. R0 was recently Pastdue Never NPE' 'F. R0 was NPE not FBE with recent past-due') then strata_NDOD = '03 - R0 was past-due <=12 m';
+		else if strata in ('D. R0 FBE not NPE') and Delq_past_12 = 'N'
+		then strata_NDOD = '04 - R0 FBE was past due >12m';
+		else if strata in ('D. R0 FBE not NPE') and Delq_past_12 = 'Y'
+		then strata_NDOD = '05 - R0 FBE was past due <=12m';
+		else if strata in ('G. R0 NPE')
+		then strata_NDOD = '06 - R0 NPE';
+		else if strata in ('H. R1 Never NPE' 'I. R1 was NPE')
+		then strata_NDOD = '07 - R1';
+		else if strata in ('J. R1 NPE')
+		then strata_NDOD = '08 - R1 - NPE';
+		else if strata in ('K. R2-3 Never NPE' 'L. R2-3 was NPE')
+		then strata_NDOD = '09 - R2+';
+		else if strata in ('M. R2-3 NPE')
+		then strata_NDOD = '10 - R2+ - NPE';
+		else if strata in ('N. R4 and Worse')
+		then strata_NDOD = '11 - R4+ doubtful';
+		else if strata in ('O. Litigation') 
+		then strata_NDOD = '12. Litigation';
+		else if strata in ('Oa. VT') 
+		then strata_NDOD = '13. VT';		
+		else if strata in ('Ob. RV Loss') 
+		then strata_NDOD = '14. RV Loss';	
+		else if strata in ('P. Closed') 
+		then strata_NDOD = '15. Closed';	
+		
+		/* Create a B2B B2C split*/
+		%if &ctry. = FR %then %do;
+			if customer_type IN("Corporate","Corporat") then do;
+				B2B_B2C = "B2B";
+			end;
+			
+			else do;
+				B2B_B2C = "B2C";
+			end;
+		%end;	
+		
+		%else %if &ctry. = DE %then %do;
+			if customer_type IN('Busines','Business') then do;
+				B2B_B2C = "B2B";
+			end;
+			
+			else do;
+				B2B_B2C = "B2C";
+			end;
+		%end;		
+	run;
+	
+	/*%if &ctry = IT %then %do; 
+		%if &st = 202003 %then %do; 
+			libname joy "E:\ANALYTICS FRAMEWORK\IFRS\Retail Provisions\IFRS\Dec 2019 Close Provisions"; 
+			proc sql;
+				create table &country._&st._NDOD (where = (JOY_ID = " ")) as 
+				select a.*, b.custname as JOY_ID
+				from &country._&st._NDOD as a left join
+				JOY.JOYRENT_DATASET as b
+				on a.acct = b.account_nbr;
+			quit;
+		%end;
+	%end;*/
+	
+	proc means data = &country._&st._NDOD noprint nway missing;
+		var total_osb;
+		class strata strata_ndod;
+		output out = x_&st sum = ;
+	run;
+
+%mend;
+
+%macro summaries (country = , ctry = , st = , end = , whr = , rectify = );
+libname ifrs "F:\Europe_F\IFRS\SAS Data\&country.";
+	%st (st = &st);
+	%st (st = &end);
+	%macro break;
+		proc sql;
+			create table &country._&st._&end. as
+			select a.*, /*b.strata_NDOD*/ b.strata_NDOD as strata_NDOD_end, b.OSB_0 as OSB_end /*changed the Strata ending point (strata_NDOD,RAW_STRATA)only for last matrix*/
+			from work.&country._&st._NDOD (where = (live_def = '1')) as a left join /*Change from live_new to (live_def or live_new)*/
+				 work.&country._&end._NDOD as b
+			on a.acct_proxy = b.acct_proxy;
+			
+		quit;	  
+	
+		data &country._&st._&end.  (where = (Naughty ^= 'Y'))
+			 naughty_&st.		   (where = (Naughty  = 'Y'));
+			set &country._&st._&end. %if &whr ^= ALL %then %do; (where = (&whr)); %end;;
+	
+			if strata_NDOD not in ('12. Litigation' '13. VT' '14. RV Loss') and 
+			  strata_NDOD_end in ('12. Litigation' '13. VT' '14. RV Loss') then OSB_end = litigation_amt;		
+			if strata_NDOD in ('12. Litigation' '13. VT' '14. RV Loss') then do;
+				OSB_0 	= litigation_amt;					
+				OSB_end = litigation_amt;
+			end;	
+			
+			%naughty (start = Strata, end = Strata_end);;					
+		run;		
+	
+		
+						
+		Proc means data = &country._&st._&end.  noprint nway;
+			var osb_end ;
+			class strata_NDOD strata_NDOD_end;
+			output out = matrix_&st._&end. sum = ;
+		run;	
+		
+		proc sql;
+			create table   matrix_&st._&end._2 as
+			select b.strata_NDOD, b.strata_NDOD_end, a.OSB_end, a._FREQ_ as Units_end from 
+			 matrix_&st._&end. as a right join
+			 ifrs.stratify2 as b
+			 on a.strata_NDOD = b.strata_NDOD and a.strata_NDOD_end = b.strata_NDOD_end;
+		quit;
+																			 		 
+		proc transpose data = matrix_&st._&end._2 out = matrix_&st._&end._U;
+			var units_end;
+			by strata_NDOD;
+			ID strata_NDOD_end;
+		run;
+		
+		proc transpose data = matrix_&st._&end._2 out = matrix_&st._&end._2;
+			var osb_end;
+			by strata_NDOD;
+			ID strata_NDOD_end;
+		run;		
+		
+		Proc means data = &country._&st._&end. noprint nway;
+			var osb_0;
+			class strata_NDOD ;
+			output out = matrix_&st._&end._beg  sum = ;
+		run;
+		
+		proc sql;
+			create table  matrix_&st._&end._beg as
+			select b.Strata_NDOD_def, b.Strata_NDOD, a.OSB_0 as OSB_Beg, a._FREQ_ as Units_beg from 
+			 matrix_&st._&end._beg  as a right join
+			 ifrs.stratify as b
+			 on a.strata_NDOD = b.strata_NDOD;
+		quit;		
+	
+		proc sql;
+			create table matrix_&st._&end._2 as 
+			select b.Strata_NDOD_def, b.strata_NDOD, b.Osb_beg, a.* 
+			from  matrix_&st._&end._2 (drop = _NAME_) as a right join 
+			matrix_&st._&end._beg as b
+			on a.strata_NDOD = b.strata_NDOD;
+		quit;						 
+	
+			
+		
+		data &ctry._matrix_&st._&end._2; retain Ctry period;
+			set matrix_&st._&end._2;
+			ctry = "&ctry.";
+			Period = "&st."||" - "||"&end.";
+			rename osb_beg = Beg;
+			if strata_ndod in ('12. Litigation' '13. VT' '14. RV Loss' '15. Closed') then delete;
+			drop 	Strata_NDOD_Def	 	 _13__VT 	 _14__RV_Loss 	_15__Closed;
+			
+		run;
+		
+		/* Replace all . with 0 for matrices*/
+		data &ctry._matrix_&st._&end._2;
+		   set &ctry._matrix_&st._&end._2;
+		   array NumVar _numeric_;
+		   do over NumVar;
+		      if NumVar=. then NumVar=0;
+		   end;
+		run;
+		
+	%mend;
+	%break;
+%mend;
+	
+%summaries (country = UK, ctry = UK, st = 201809, end = 201909, whr = ALL, rectify = Y);
+%summaries (country = UK, ctry = UK, st = 201909, end = 202009, whr = ALL, rectify = Y);/*202003,202009*/
+%summaries (country = UK, ctry = UK, st = 202009, end = 202109, whr = ALL, rectify = Y);
+
+%summaries (country = GER, ctry = DE, st = 201809, end = 201909, whr = ALL, rectify = Y);
+%summaries (country = GER, ctry = DE, st = 201909, end = 202009, whr = ALL, rectify = Y);/*202003,202009*/
+%summaries (country = GER, ctry = DE, st = 202009, end = 202109, whr = ALL, rectify = Y);
+
+/*Splitting France up by B2B and B2C*/
+%summaries (country = FRA, ctry = FR, st = 201809, end = 201909, whr = B2B_B2C = "B2B", rectify = Y);
+%summaries (country = FRA, ctry = FR, st = 201909, end = 202009, whr = B2B_B2C = "B2B", rectify = Y);/*202003,202009*/
+%summaries (country = FRA, ctry = FR, st = 202009, end = 202109, whr = B2B_B2C = "B2B", rectify = Y);
+
+
+%summaries (country = FRA, ctry = FR, st = 201809, end = 201909, whr = B2B_B2C = "B2C", rectify = Y);
+%summaries (country = FRA, ctry = FR, st = 201909, end = 202009, whr = B2B_B2C = "B2C", rectify = Y);/*202003,202009*/
+%summaries (country = FRA, ctry = FR, st = 202009, end = 202109, whr = B2B_B2C = "B2C", rectify = Y);
+
+%summaries (country = ITA, ctry = IT, st = 201809, end = 201909, whr = ALL, rectify = Y);
+%summaries (country = ITA, ctry = IT, st = 201909, end = 202009, whr = ALL, rectify = Y);/*202003,202009*/
+%summaries (country = ITA, ctry = IT, st = 202009, end = 202109, whr = ALL, rectify = Y);
+
+%summaries (country = BEL, ctry = BE, st = 201809, end = 201909, whr = ALL, rectify = Y);
+%summaries (country = BEL, ctry = BE, st = 201909, end = 202003, whr = ALL, rectify = Y);/*202003,202009*/
+%summaries (country = BEL, ctry = BE, st = 202009, end = 202109, whr = ALL, rectify = Y);
+
+%summaries (country = NET, ctry = NL, st = 201809, end = 201909, whr = ALL, rectify = Y);
+%summaries (country = NET, ctry = NL, st = 201909, end = 202003, whr = ALL, rectify = Y);/*202003,202009*/
+%summaries (country = NET, ctry = NL, st = 202009, end = 202109, whr = ALL, rectify = Y);
+
+%summaries (country = AUS, ctry = AT, st = 201809, end = 201909, whr = ALL, rectify = Y);
+%summaries (country = AUS, ctry = AT, st = 201909, end = 202009, whr = ALL, rectify = Y);/*202003,202009*/
+%summaries (country = AUS, ctry = AT, st = 202009, end = 202109, whr = ALL, rectify = Y);
+
+%summaries (country = SWI, ctry = CH, st = 201809, end = 201909, whr = ALL, rectify = Y);
+%summaries (country = SWI, ctry = CH, st = 201909, end = 202003, whr = ALL, rectify = Y);/*202003,202009*/
+%summaries (country = SWI, ctry = CH, st = 202009, end = 202109, whr = ALL, rectify = Y);
+
+
+data all;
+	set 
+WORK.UK_MATRIX_201809_201909_2 
+WORK.UK_MATRIX_201909_202003_2 /*202003_2,202009_2*/
+WORK.UK_MATRIX_202009_202109_2	
+
+WORK.DE_MATRIX_201809_201909_2 
+WORK.DE_MATRIX_201909_202003_2 /*202003_2,202009_2*/
+WORK.DE_MATRIX_202009_202109_2
+
+WORK.FR_MATRIX_201809_201909_2 
+WORK.FR_MATRIX_201909_202003_2 /*202003_2,202009_2*/
+WORK.FR_MATRIX_202009_202109_2
+
+WORK.IT_MATRIX_201809_201909_2 
+WORK.IT_MATRIX_201909_202003_2 /*202003_2,202009_2*/
+WORK.IT_MATRIX_202009_202109_2
+
+WORK.FR_MATRIX_201809_201909_2 
+WORK.FR_MATRIX_201909_202003_2 /*202003_2,202009_2*/
+WORK.FR_MATRIX_202009_202109_2
+
+WORK.BE_MATRIX_201809_201909_2 
+WORK.BE_MATRIX_201909_202003_2 /*202003_2,202009_2*/
+WORK.BE_MATRIX_202009_202109_2
+
+WORK.NL_MATRIX_201809_201909_2 
+WORK.NL_MATRIX_201909_202003_2 /*202003_2,202009_2*/
+WORK.NL_MATRIX_202009_202109_2
+
+WORK.CH_MATRIX_201809_201909_2 
+WORK.CH_MATRIX_201909_202003_2 /*202003_2,202009_2*/
+WORK.CH_MATRIX_202009_202109_2
+
+
+WORK.AT_MATRIX_201809_201909_2 
+WORK.AT_MATRIX_201909_202003_2 /*202003_2,202009_2*/
+WORK.AT_MATRIX_202009_202109_2;
+run;
+
+
+%macro eir (ctry = , country = );
+	proc means data = 	IFRS_&ctry..&country._ALL_202109_2 (where = (live = "1")) noprint nway;
+		var customer_rate; weight total_osb;
+		output out = &ctry._EIR mean = ;
+	run;		
+%mend; 
+
+%eir (ctry = UK, country = UK);
+%eir (ctry = DE, country = GER);
+%eir (ctry = FR, country = FRA);
+%eir (ctry = IT, country = ITA);
+%eir (ctry = BE, country = BEL);
+%eir (ctry = NL, country = NET);
+%eir (ctry = CH, country = SWI);
+%eir (ctry = AT, country = AUS);
